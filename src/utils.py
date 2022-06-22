@@ -50,10 +50,10 @@ class FacesDataset(Dataset):
             ])
         output['original_img'] = img
         output['path'] = str(filename)
-        output['label'] = torch.Tensor([self.labels[item]])
-        output['img'] = transform(image=resizeimg)['image']
+        output['label'] = torch.Tensor([self.labels[item]]).int()
+        output['img'] = transform(image=resizeimg)['image'].float()
         self._iter += 1
-        print(52, self.mode)  # TODO: del str
+        print(52, (self._iter, self.mode), output['label'].shape, output['label'])  # TODO: del str
         return output
 
 
@@ -108,10 +108,10 @@ class ConvNext_pl(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         imgs, labels = batch['img'], batch['label']
-        out = self.model(imgs.float())
+        out = self.model(imgs)
         print('\n', 112)
-        print(labels.shape)
-        print(out.shape)
+        print(labels.shape, labels, type(labels))
+        print(out.shape, out, type(out))
         loss = self.criterion(out, labels)
         self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)  # TODO: add metric Accuracy plot
         return loss
