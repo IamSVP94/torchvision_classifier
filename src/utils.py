@@ -90,17 +90,17 @@ class ConvNext_pl(LightningModule):
         optimizer = torch.optim.Adam(
             self.parameters(),
             lr=self.start_learning_rate,
-            # weight_decay=1e-2,
+            weight_decay=1e-8,
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min',
-            patience=3, cooldown=3,
-            eps=1e-8, verbose=True,
+            optimizer, mode='min', factor=0.04,
+            patience=5, cooldown=3, eps=1e-7,
+            verbose=True,
         )
 
         # scheduler_steplr = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-        # scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=3, after_scheduler=scheduler_steplr)
+        # scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=scheduler_steplr)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": 'val_loss'}
 
     def train_dataloader(self):

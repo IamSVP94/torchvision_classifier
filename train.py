@@ -39,7 +39,7 @@ loaders = {
 # TODO: save checkpoint.pth
 logdir = BASE_DIR / 'logs' / datetime.now().strftime("%Y%m%d-%H%M%S")
 logdir.mkdir(parents=True, exist_ok=True)
-logger = TensorBoardLogger(save_dir=logdir, name='Faces2206')
+logger = TensorBoardLogger(save_dir=logdir, name='Faces2206', version=0)
 
 checkpoint_model = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-152404/Faces2206/version_0/checkpoints/last.ckpt'
 model = ConvNext_pl(
@@ -55,6 +55,7 @@ lr_monitor = LearningRateMonitor(logging_interval='epoch')
 ckp_monitor = ModelCheckpoint(monitor='val_accuracy', mode='max',
                               save_last=True, save_top_k=2,
                               save_on_train_epoch_end=True,
+                              filename='{epoch:02d}-{step:02d}-{val_accuracy:.4f}',
                               )
 trainer = Trainer(gpus=AVAIL_GPUS,
                   max_epochs=400,
@@ -63,7 +64,7 @@ trainer = Trainer(gpus=AVAIL_GPUS,
                   callbacks=[lr_monitor, ckp_monitor],
                   )
 
-# ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-144655/Faces2206/version_0/checkpoints/epoch=1-step=22.ckpt'
-trainer.fit(model)
+ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-152927/Faces2206/version_0/checkpoints/epoch=31-step=352.ckpt'
+trainer.fit(model, ckpt_path=ckp_trainer)
 
 model.save_pth('ckp.pth')
