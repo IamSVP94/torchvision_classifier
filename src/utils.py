@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 import albumentations as A
 from albumentations.pytorch import ToTensorV2 as ToTensor
 from warmup_scheduler import GradualWarmupScheduler
+from torchmetrics.functional import accuracy
 
 from src.constants import SEED
 
@@ -33,8 +34,7 @@ class FacesDataset(Dataset):
     def __len__(self) -> int:
         return len(self.imgs)
 
-    def __getitem__(self, item: int) -> dict:
-        output = dict()
+    def __getitem__(self, item: int) -> Tuple:
         filename = self.imgs[item]
         img = cv2.cvtColor(cv2.imread(str(filename)), cv2.COLOR_BGR2RGB)
         resizeimg = cv2.resize(img, self.input_size)
@@ -48,20 +48,15 @@ class FacesDataset(Dataset):
                 A.HorizontalFlip(p=0.3),
                 ToTensor(),
             ])
-        output['original_img'] = img
-        output['path'] = str(filename)
-        output['label'] = torch.Tensor([self.labels[item]]).int()
-        output['img'] = transform(image=resizeimg)['image'].float()
-        self._iter += 1
-        print(52, (self._iter, self.mode), output['label'].shape, output['label'])  # TODO: del str
-        return output
+        GT = torch.Tensor([self.labels[item]]).to(torch.int64)
+        transform_img = transform(image=resizeimg)['image'].float()
+        return transform_img, GT
 
 
 class ConvNext_pl(LightningModule):
     def __init__(self,
-                 model, num_classes: int,
+                 model,
                  *args,
-                 pretrained=False,
                  start_learning_rate=1e-6,
                  batch_size=1,
                  loader=None,
@@ -72,7 +67,7 @@ class ConvNext_pl(LightningModule):
         self.batch_size = batch_size
         self.loader = loader
         self.criterion = criterion()
-        self.model = model(pretrained=pretrained, num_classes=num_classes)
+        self.model = model
 
     def forward(self, img):
         out = self.model(img)
@@ -96,22 +91,22 @@ class ConvNext_pl(LightningModule):
         return self.loader['train']
 
     def training_step(self, batch, batch_idx):
-        imgs, labels = batch['img'], batch['label']
-        out = self.model(imgs)
-        preds = torch.argmax(out, dim=1)
-        loss = self.criterion(preds, labels)
-        self.log("train_loss", loss, prog_bar=True)  # TODO: add metric Accuracy plot
+        imgs, labels = batch
+        gts = labels.squeeze(1)
+        preds = self(imgs)
+        loss = self.criterion(preds, gts)
+        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size)
         return loss
 
     def val_dataloader(self):
         return self.loader['test']
 
     def validation_step(self, batch, batch_idx):
-        imgs, labels = batch['img'], batch['label']
-        out = self.model(imgs)
-        print('\n', 112)
-        print(labels.shape, labels, type(labels))
-        print(out.shape, out, type(out))
-        loss = self.criterion(out, labels)
-        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)  # TODO: add metric Accuracy plot
+        imgs, labels = batch
+        gts = labels.squeeze(1)
+        preds = self(imgs)
+        loss = self.criterion(preds, gts)
+        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)
+        acc = accuracy(preds, gts)
+        self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size)
         return loss
