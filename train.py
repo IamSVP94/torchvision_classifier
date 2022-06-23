@@ -55,12 +55,12 @@ lr_monitor = LearningRateMonitor(logging_interval='epoch')
 ckp_acc = ModelCheckpoint(monitor='val_accuracy', mode='max',
                           save_last=True, save_top_k=2,
                           save_on_train_epoch_end=True,
-                          filename='{epoch:02d}-{step:02d}-{val_accuracy:.4f}',
+                          filename='{epoch:02d}-{step:02d}-{val_accuracy:.4f}-{val_loss:.4f}',
                           )
 ckp_val_loss = ModelCheckpoint(monitor='val_loss', mode='min',
                                save_last=True, save_top_k=2,
                                save_on_train_epoch_end=True,
-                               filename='{epoch:02d}-{step:02d}-{val_loss:02d}',
+                               filename='{epoch:02d}-{step:02d}-{val_loss:.4f}-{val_accuracy:.4f}',
                                )
 
 trainer = Trainer(gpus=AVAIL_GPUS,

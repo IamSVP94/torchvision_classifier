@@ -94,8 +94,8 @@ class ConvNext_pl(LightningModule):
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5,
-            patience=7, cooldown=3,
+            optimizer, mode='min', factor=0.55,
+            patience=5, cooldown=3,
             min_lr=1e-6, eps=1e-7,
             verbose=True,
         )
