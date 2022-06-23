@@ -36,6 +36,12 @@ class FacesDataset(Dataset):
             df = pd.read_csv(csv_file, names=['path', 'label'])
             self.imgs = list(map(Path, df['path']))
             self.labels = df['label'].to_list()
+
+        weighted = dict()
+        for i in self.labels:
+            weighted[i] = weighted[i] + 1 if weighted.get(i) else 1
+        min_class_counter = min(weighted.values())
+        self.weighted = torch.Tensor([weighted[i] / min_class_counter for i in range(len(weighted.keys()))])
         self.mode = mode
         self.input_size = input_size
 
@@ -62,20 +68,19 @@ class FacesDataset(Dataset):
 
 
 class ConvNext_pl(LightningModule):
-    def __init__(self,
-                 model,
-                 *args,
-                 start_learning_rate=1e-6,
-                 batch_size=1,
+    def __init__(self, model, *args, checkpoint=None,
+                 start_learning_rate=1e-6, batch_size=1, criterion=nn.CrossEntropyLoss(),
                  loader=None,
-                 criterion=nn.CrossEntropyLoss,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.start_learning_rate = start_learning_rate
         self.batch_size = batch_size
         self.loader = loader
-        self.criterion = criterion()
         self.model = model
+        self.criterion = criterion
+
+        if Path(checkpoint).exists():
+            self.model.load_state_dict(torch.load(checkpoint))
 
     def forward(self, img):
         out = self.model(img)
@@ -87,13 +92,15 @@ class ConvNext_pl(LightningModule):
             lr=self.start_learning_rate,
             # weight_decay=1e-2,
         )
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, cooldown=3, eps=1e-8, verbose=True)
 
-        # TODO: ReduceLROnPlateau here
-        # scheduler_steplr = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1, verbose=True)
-        scheduler_steplr = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-        scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=5, after_scheduler=scheduler_steplr)
-        return [optimizer], [scheduler]
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
+                                                               patience=20, cooldown=3,
+                                                               eps=1e-8, verbose=False,
+                                                               )
+
+        # scheduler_steplr = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        # scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=3, after_scheduler=scheduler_steplr)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": 'val_loss'}
 
     def train_dataloader(self):
         return self.loader['train']
