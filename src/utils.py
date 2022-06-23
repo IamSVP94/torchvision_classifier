@@ -55,11 +55,12 @@ class FacesDataset(Dataset):
         if self.mode == 'train':
             transform = A.Compose([
                 A.HorizontalFlip(p=0.3),
+                A.PixelDropout(p=0.1),
+                A.Sharpen(p=0.1),
                 ToTensor(),
             ])
         else:
             transform = A.Compose([
-                A.HorizontalFlip(p=0.3),
                 ToTensor(),
             ])
         GT = torch.Tensor([self.labels[item]]).to(torch.int64)
@@ -77,10 +78,9 @@ class ConvNext_pl(LightningModule):
         self.batch_size = batch_size
         self.loader = loader
         self.model = model
+        if checkpoint is not None and Path(checkpoint).exists():
+            self.model.load_state_dict(torch.load(str(checkpoint)))
         self.criterion = criterion
-
-        if Path(checkpoint).exists():
-            self.model.load_state_dict(torch.load(checkpoint))
 
     def forward(self, img):
         out = self.model(img)
@@ -93,10 +93,11 @@ class ConvNext_pl(LightningModule):
             # weight_decay=1e-2,
         )
 
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
-                                                               patience=20, cooldown=3,
-                                                               eps=1e-8, verbose=False,
-                                                               )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min',
+            patience=3, cooldown=3,
+            eps=1e-8, verbose=True,
+        )
 
         # scheduler_steplr = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
         # scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=3, after_scheduler=scheduler_steplr)
@@ -125,3 +126,6 @@ class ConvNext_pl(LightningModule):
         acc = accuracy(preds, gts)
         self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size)
         return loss
+
+    def save_pth(self, path):
+        torch.save(self.model.state_dict(), str(path))

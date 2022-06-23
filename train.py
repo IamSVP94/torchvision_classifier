@@ -1,9 +1,8 @@
 from pathlib import Path
 import torch
-from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 
-from src.constants import SEED, BASE_DIR, num_workers, start_learning_rate, BATCH_SIZE, AVAIL_GPUS
+from src.constants import BASE_DIR, num_workers, start_learning_rate, BATCH_SIZE, AVAIL_GPUS
 from src.utils import FacesDataset, ConvNext_pl
 from torchvision import models
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -41,23 +40,30 @@ loaders = {
 logdir = BASE_DIR / 'logs' / datetime.now().strftime("%Y%m%d-%H%M%S")
 logdir.mkdir(parents=True, exist_ok=True)
 logger = TensorBoardLogger(save_dir=logdir, name='Faces2206')
-lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
-# checkpoint_model =
+checkpoint_model = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-152404/Faces2206/version_0/checkpoints/last.ckpt'
 model = ConvNext_pl(
     model=models.convnext_tiny(pretrained=False, num_classes=2),
-    # checkpoint=checkpoint_model,
     criterion=torch.nn.CrossEntropyLoss(weight=train.weighted),
     start_learning_rate=start_learning_rate,
     batch_size=BATCH_SIZE,
     loader=loaders,
+    checkpoint=checkpoint_model,
 )
 
+lr_monitor = LearningRateMonitor(logging_interval='epoch')
+ckp_monitor = ModelCheckpoint(monitor='val_accuracy', mode='max',
+                              save_last=True, save_top_k=2,
+                              save_on_train_epoch_end=True,
+                              )
 trainer = Trainer(gpus=AVAIL_GPUS,
-                  max_epochs=7,
+                  max_epochs=400,
                   logger=logger,
-                  callbacks=[lr_monitor],
+                  log_every_n_steps=10,
+                  callbacks=[lr_monitor, ckp_monitor],
                   )
 
-checkpoint_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-124116/Faces2206/version_0/checkpoints/epoch=5-step=630.ckpt'
-trainer.fit(model, ckpt_path=checkpoint_trainer)
+# ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-144655/Faces2206/version_0/checkpoints/epoch=1-step=22.ckpt'
+trainer.fit(model)
+
+model.save_pth('ckp.pth')
