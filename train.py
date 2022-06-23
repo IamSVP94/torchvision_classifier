@@ -52,19 +52,25 @@ model = ConvNext_pl(
 )
 
 lr_monitor = LearningRateMonitor(logging_interval='epoch')
-ckp_monitor = ModelCheckpoint(monitor='val_accuracy', mode='max',
-                              save_last=True, save_top_k=2,
-                              save_on_train_epoch_end=True,
-                              filename='{epoch:02d}-{step:02d}-{val_accuracy:.4f}',
-                              )
+ckp_acc = ModelCheckpoint(monitor='val_accuracy', mode='max',
+                          save_last=True, save_top_k=2,
+                          save_on_train_epoch_end=True,
+                          filename='{epoch:02d}-{step:02d}-{val_accuracy:.4f}',
+                          )
+ckp_val_loss = ModelCheckpoint(monitor='val_loss', mode='min',
+                               save_last=True, save_top_k=2,
+                               save_on_train_epoch_end=True,
+                               filename='{epoch:02d}-{step:02d}-{val_loss:02d}',
+                               )
+
 trainer = Trainer(gpus=AVAIL_GPUS,
                   max_epochs=400,
                   logger=logger,
                   log_every_n_steps=10,
-                  callbacks=[lr_monitor, ckp_monitor],
+                  callbacks=[lr_monitor, ckp_acc, ckp_val_loss],
                   )
 
-ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-152927/Faces2206/version_0/checkpoints/epoch=31-step=352.ckpt'
-trainer.fit(model, ckpt_path=ckp_trainer)
+# ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-163722/Faces2206/version_0/checkpoints/epoch=39-step=448-val_accuracy=0.9083.ckpt'
+trainer.fit(model)
 
 model.save_pth('ckp.pth')

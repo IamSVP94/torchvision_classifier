@@ -54,9 +54,9 @@ class FacesDataset(Dataset):
         resizeimg = cv2.resize(img, self.input_size)
         if self.mode == 'train':
             transform = A.Compose([
-                A.HorizontalFlip(p=0.3),
-                A.PixelDropout(p=0.1),
-                A.Sharpen(p=0.1),
+                A.HorizontalFlip(p=0.5),
+                A.PixelDropout(p=0.2),
+                A.Sharpen(p=0.2),
                 ToTensor(),
             ])
         else:
@@ -87,15 +87,16 @@ class ConvNext_pl(LightningModule):
         return out
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.start_learning_rate,
             weight_decay=1e-8,
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.04,
-            patience=5, cooldown=3, eps=1e-7,
+            optimizer, mode='min', factor=0.5,
+            patience=7, cooldown=3,
+            min_lr=1e-6, eps=1e-7,
             verbose=True,
         )
 
