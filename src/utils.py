@@ -1,7 +1,8 @@
 import random
+from pathlib import Path
 from typing import List, Tuple
-
 import cv2
+import pandas as pd
 import torch
 from torch import nn as nn
 import pytorch_lightning as pl
@@ -11,8 +12,8 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2 as ToTensor
 from warmup_scheduler import GradualWarmupScheduler
 from torchmetrics.functional import accuracy
-
 from src.constants import SEED
+from sklearn import preprocessing
 
 # print(pl.__version__)
 pl.seed_everything(SEED)  # unified seed
@@ -21,15 +22,22 @@ random.seed(SEED)  # unified seed
 
 class FacesDataset(Dataset):
     def __init__(self,
-                 img_list: List[str],
+                 img_list: List[str] = None,
+                 csv_file=None,
                  labels: List[str] = None,
                  input_size: Tuple[int] = (112, 112),
                  mode: str = 'test') -> None:
-        self.imgs = img_list
-        self.labels = labels
+        assert ((csv_file is not None) or (img_list is not None)), 'You should set csv_file or img_list'
+
+        if img_list:
+            self.imgs = img_list
+            self.labels = labels
+        elif csv_file:
+            df = pd.read_csv(csv_file, names=['path', 'label'])
+            self.imgs = list(map(Path, df['path']))
+            self.labels = df['label'].to_list()
         self.mode = mode
-        self.input_size = input_size  # h,w
-        self._iter = 0
+        self.input_size = input_size
 
     def __len__(self) -> int:
         return len(self.imgs)

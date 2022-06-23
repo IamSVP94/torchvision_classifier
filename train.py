@@ -15,11 +15,8 @@ DATASET_DIR = Path('/home/vid/hdd/projects/PycharmProjects/torchvision_classifie
 imgs = list(DATASET_DIR.glob('**/*.jpg'))
 labels = [0 if i.parts[-2] == 'bad' else 1 for i in imgs]
 
-X_train, X_test, y_train, y_test = train_test_split(imgs, labels, test_size=0.2, random_state=SEED, stratify=labels)
-# TODO: check seed here
-
-train = FacesDataset(img_list=X_train, labels=y_train, mode='train')
-test = FacesDataset(img_list=X_test, labels=y_test, mode='test')
+train = FacesDataset(csv_file=BASE_DIR / 'temp/train.csv', mode='train')
+test = FacesDataset(csv_file=BASE_DIR / 'temp/test.csv', mode='test')
 
 loaders = {
     'train': DataLoader(
