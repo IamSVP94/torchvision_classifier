@@ -13,7 +13,6 @@ from albumentations.pytorch import ToTensorV2 as ToTensor
 from warmup_scheduler import GradualWarmupScheduler
 from torchmetrics.functional import accuracy
 from src.constants import SEED
-from sklearn import preprocessing
 
 # print(pl.__version__)
 pl.seed_everything(SEED)  # unified seed
@@ -57,10 +56,12 @@ class FacesDataset(Dataset):
                 A.HorizontalFlip(p=0.5),
                 A.PixelDropout(p=0.2),
                 A.Sharpen(p=0.2),
+                A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
                 ToTensor(),
             ])
         else:
             transform = A.Compose([
+                A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
                 ToTensor(),
             ])
         GT = torch.Tensor([self.labels[item]]).to(torch.int64)
