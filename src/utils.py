@@ -37,11 +37,11 @@ class FacesDataset(Dataset):
             self.imgs = list(map(Path, df['path']))
             self.labels = df['label'].to_list()
 
-        weighted = dict()
+        self.c_counts = dict()  # class balance dict
         for i in self.labels:
-            weighted[i] = weighted[i] + 1 if weighted.get(i) else 1
-        min_class_counter = min(weighted.values())
-        self.weighted = torch.Tensor([weighted[i] / min_class_counter for i in range(len(weighted.keys()))])
+            self.c_counts[i] = self.c_counts[i] + 1 if self.c_counts.get(i) else 1
+        min_class_counter = min(self.c_counts.values())
+        self.weighted = torch.Tensor([self.c_counts[i] / min_class_counter for i in range(len(self.c_counts.keys()))])
         self.mode = mode
         self.input_size = input_size
 
@@ -81,10 +81,11 @@ class ConvNext_pl(LightningModule):
         if checkpoint is not None and Path(checkpoint).exists():
             self.model.load_state_dict(torch.load(str(checkpoint)))
         self.criterion = criterion
+        self.acc = []  # for metric monitor
 
     def forward(self, img):
-        out = self.model(img)
-        return out
+        pred = self.model(img)
+        return pred
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -94,9 +95,9 @@ class ConvNext_pl(LightningModule):
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.55,
+            optimizer, mode='min', factor=0.5,
             patience=5, cooldown=3,
-            min_lr=1e-6, eps=1e-7,
+            min_lr=1e-7, eps=1e-7,
             verbose=True,
         )
 
@@ -126,7 +127,12 @@ class ConvNext_pl(LightningModule):
         self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)
         acc = accuracy(preds, gts)
         self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size)
+        self.acc.append(acc)
         return loss
+
+    def validation_epoch_end(self, validation_step_outputs):
+        self.log("epoch_val_mean_accuracy", torch.mean(torch.Tensor(self.acc)), batch_size=1)
+        self.acc = []
 
     def save_pth(self, path):
         torch.save(self.model.state_dict(), str(path))

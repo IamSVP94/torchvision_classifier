@@ -12,13 +12,13 @@ loader = DataLoader(test, batch_size=5000, drop_last=False, shuffle=False, num_w
 
 checkpoint = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/ckp.pth'
 model = models.convnext_tiny(pretrained=False, num_classes=2)
-if checkpoint is not None and Path(checkpoint).exists():
-    model.load_state_dict(torch.load(str(checkpoint)))
+model.load_state_dict(torch.load(str(checkpoint)))
 
 metrics = {'accuracy': accuracy, 'f1': f1_score}
 
-model.eval()
+print(test.c_counts)
 metrics_val = dict()
+model.eval()
 with torch.no_grad():
     for imgs, GTs in tqdm(loader, total=len(loader)):
         PREDs = model(imgs)
@@ -29,5 +29,5 @@ with torch.no_grad():
             else:
                 metrics_val[mname] = [val]
 
-for k, v in metrics_val.items():
+for k, v in metrics_val.items():  # show metric mean val
     print(f'"{k}" = {torch.mean(torch.Tensor(v))}')
