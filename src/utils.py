@@ -36,11 +36,12 @@ class FacesDataset(Dataset):
             self.imgs = list(map(Path, df['path']))
             self.labels = df['label'].to_list()
 
-        self.c_counts = dict()  # class balance dict
+        self.class_balance = dict()  # class balance dict
         for i in self.labels:
-            self.c_counts[i] = self.c_counts[i] + 1 if self.c_counts.get(i) else 1
-        min_class_counter = min(self.c_counts.values())
-        self.weighted = torch.Tensor([self.c_counts[i] / min_class_counter for i in range(len(self.c_counts.keys()))])
+            self.class_balance[i] = self.class_balance[i] + 1 if self.class_balance.get(i) else 1
+        min_clsas_counter = min(self.class_balance.values())
+        self.weighted = torch.Tensor(
+            [self.class_balance[i] / min_clsas_counter for i in range(len(self.class_balance.keys()))])
         self.mode = mode
         self.input_size = input_size
 
@@ -56,13 +57,13 @@ class FacesDataset(Dataset):
                 A.HorizontalFlip(p=0.5),
                 A.PixelDropout(p=0.2),
                 A.Sharpen(p=0.2),
-                A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
-                ToTensor(),
+                A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), always_apply=True),
+                ToTensor(always_apply=True),
             ])
         else:
             transform = A.Compose([
-                A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
-                ToTensor(),
+                A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), always_apply=True),
+                ToTensor(always_apply=True),
             ])
         GT = torch.Tensor([self.labels[item]]).to(torch.int64)
         transform_img = transform(image=resizeimg)['image'].float()
@@ -82,7 +83,6 @@ class ConvNext_pl(LightningModule):
         if checkpoint is not None and Path(checkpoint).exists():
             self.model.load_state_dict(torch.load(str(checkpoint)))
         self.criterion = criterion
-        self.acc = []  # for metric monitor
 
     def forward(self, img):
         pred = self.model(img)
@@ -95,15 +95,15 @@ class ConvNext_pl(LightningModule):
             weight_decay=1e-8,
         )
 
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5,
-            patience=5, cooldown=3,
-            min_lr=1e-7, eps=1e-7,
-            verbose=True,
-        )
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     optimizer, mode='min', factor=0.5,
+        #     patience=10, cooldown=5,
+        #     min_lr=1e-7, eps=1e-7,
+        #     verbose=True,
+        # )
 
-        # scheduler_steplr = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-        # scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=scheduler_steplr)
+        major_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=major_scheduler)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": 'val_loss'}
 
     def train_dataloader(self):
@@ -128,12 +128,10 @@ class ConvNext_pl(LightningModule):
         self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)
         acc = accuracy(preds, gts)
         self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size)
-        self.acc.append(acc)
         return loss
 
-    def validation_epoch_end(self, validation_step_outputs):
-        self.log("epoch_val_mean_accuracy", torch.mean(torch.Tensor(self.acc)), batch_size=1)
-        self.acc = []
-
-    def save_pth(self, path):
-        torch.save(self.model.state_dict(), str(path))
+    def save_pth(self, path, only_weight=True):
+        if only_weight:
+            torch.save(self.model.state_dict(), str(path))
+        else:
+            torch.save(self.model, str(path))

@@ -10,13 +10,16 @@ from torchmetrics.functional import accuracy, f1_score
 test = FacesDataset(csv_file=BASE_DIR / 'temp/test.csv', mode='test')
 loader = DataLoader(test, batch_size=5000, drop_last=False, shuffle=False, num_workers=num_workers)
 
-checkpoint = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/ckp.pth'
+checkpoint = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/ckp89.pth'
 model = models.convnext_tiny(pretrained=False, num_classes=2)
-model.load_state_dict(torch.load(str(checkpoint)))
+
+weights = torch.load(checkpoint, map_location="cpu")
+model.load_state_dict(weights.state_dict())
+# model.load_state_dict(weights)
 
 metrics = {'accuracy': accuracy, 'f1': f1_score}
 
-print(test.c_counts)
+print(test.class_balance)
 metrics_val = dict()
 model.eval()
 with torch.no_grad():

@@ -28,27 +28,28 @@ loaders = {
     ),
     'test': DataLoader(
         test,
-        batch_size=BATCH_SIZE,
+        batch_size=1,
         shuffle=False,
         num_workers=num_workers,
         drop_last=False,
     ),
 }
 
-# TODO: start form checkpoint
-# TODO: save checkpoint.pth
+# TODO: save checkpoint.pth while train
 logdir = BASE_DIR / 'logs' / datetime.now().strftime("%Y%m%d-%H%M%S")
 logdir.mkdir(parents=True, exist_ok=True)
 logger = TensorBoardLogger(save_dir=logdir, name='Faces2206', version=0)
 
-checkpoint_model = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-152404/Faces2206/version_0/checkpoints/last.ckpt'
+print(train.class_balance)  # class imbalance
+
+# checkpoint_model = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/ckp87.pth'
 model = ConvNext_pl(
     model=models.convnext_tiny(pretrained=False, num_classes=2),
     criterion=torch.nn.CrossEntropyLoss(weight=train.weighted),
     start_learning_rate=start_learning_rate,
     batch_size=BATCH_SIZE,
     loader=loaders,
-    checkpoint=checkpoint_model,
+    # checkpoint=checkpoint_model,
 )
 
 lr_monitor = LearningRateMonitor(logging_interval='epoch')
@@ -64,13 +65,13 @@ ckp_val_loss = ModelCheckpoint(monitor='val_loss', mode='min',
                                )
 
 trainer = Trainer(gpus=AVAIL_GPUS,
-                  max_epochs=400,
+                  max_epochs=281,
                   logger=logger,
                   log_every_n_steps=10,
                   callbacks=[lr_monitor, ckp_acc, ckp_val_loss],
                   )
 
-# ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220623-163722/Faces2206/version_0/checkpoints/epoch=39-step=448-val_accuracy=0.9083.ckpt'
-trainer.fit(model)
+ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/20220627-105000/Faces2206/version_0/checkpoints/last.ckpt'
+trainer.fit(model, ckpt_path=ckp_trainer)
 
-model.save_pth('ckp.pth')
+model.save_pth('ckp3.pth', only_weight=False)
