@@ -12,6 +12,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2 as ToTensor
 from warmup_scheduler import GradualWarmupScheduler
 from torchmetrics.functional import accuracy
+from torchmetrics import CosineSimilarity
 from src.constants import SEED
 
 # print(pl.__version__)
@@ -91,7 +92,7 @@ class ConvNext_pl(LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
-            lr=self.start_learning_rate,
+            # lr=self.start_learning_rate,
             weight_decay=1e-8,
         )
 
@@ -128,6 +129,180 @@ class ConvNext_pl(LightningModule):
         self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)
         acc = accuracy(preds, gts)
         self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size)
+        return loss
+
+    def save_pth(self, path, only_weight=True):
+        if only_weight:
+            torch.save(self.model.state_dict(), str(path))
+        else:
+            torch.save(self.model, str(path))
+
+
+class RegressionDataset(Dataset):
+    def __init__(self,
+                 img_list: List[str] = None,
+                 gt: List[float] = None,
+                 input_size: Tuple[int] = (1920, 1088),
+                 mode: str = 'test') -> None:
+        self.imgs = list()
+        self.imgs_path = list()
+        for img_path in img_list:  # this is wrong (only for small datasets!)
+            img = cv2.cvtColor(cv2.imread(str(img_path)), cv2.COLOR_BGR2RGB)
+            resizeimg = cv2.resize(img, input_size)
+            self.imgs.append(resizeimg)
+            self.imgs_path.append(img_path)
+        self.gt = list(map(torch.Tensor, gt))
+        self.mode = mode
+        self.input_size = input_size
+
+    def __len__(self) -> int:
+        return len(self.imgs)
+
+    @staticmethod
+    def get_training_augmentation():
+        train_transform = [
+
+            A.HorizontalFlip(p=0.5),
+
+            A.ShiftScaleRotate(scale_limit=0.5, rotate_limit=0, shift_limit=0.1, p=1, border_mode=0),
+
+            # A.PadIfNeeded(min_height=320, min_width=320, always_apply=True, border_mode=0),
+            # A.CropNonEmptyMaskIfExists(height=1088, width=1088, always_apply=True, p=1.0),
+            # A.Resize(height=256, width=256, always_apply=True),
+
+            # A.IAAAdditiveGaussianNoise(p=0.2),
+            # A.IAAPerspective(p=0.5),
+
+            # A.OneOf(
+            #     [
+            #         A.CLAHE(p=1),
+            #         A.RandomBrightness(p=1),
+            #         A.RandomGamma(p=1),
+            #     ],
+            #     p=0.9,
+            # ),
+
+            A.OneOf(
+                [
+                    A.GridDistortion(p=1),
+                    A.ElasticTransform(p=1),
+                ],
+                p=0.5,
+            ),
+
+            A.OneOf(
+                [
+                    A.Sharpen(p=1),
+                    A.Blur(blur_limit=3, p=1),
+                    A.MotionBlur(blur_limit=3, p=1),
+                ],
+                p=0.9,
+            ),
+
+            # A.OneOf(
+            #     [
+            #         A.RandomContrast(p=1),
+            #         A.HueSaturationValue(p=1),
+            #     ],
+            #     p=0.9,
+            # ),
+
+            ToTensor(always_apply=True),
+        ]
+        return A.Compose(train_transform)
+
+    def __getitem__(self, item: int) -> Tuple:
+        img = self.imgs[item]
+        gt = self.gt[item]
+        if self.mode == 'train':
+            transform = self.get_training_augmentation()
+        else:
+            transform = A.Compose([
+                ToTensor(always_apply=True),
+            ])
+        transform_img = transform(image=img)['image'].float()
+        return transform_img, gt
+
+
+class VladRegressionNet(nn.Module):
+    def __init__(self, class_num=2, activation=nn.ReLU()):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 8, 3)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(8, 16, 3)
+        # self.fc1 = nn.Linear(16 * 5 * 5, class_num * 3)
+        self.fc1 = nn.Linear(2064960, class_num * 4)
+        self.fc2 = nn.Linear(class_num * 4, class_num * 2)
+        self.fc3 = nn.Linear(class_num * 2, class_num)
+        self.activation = activation
+
+    def forward(self, x):
+        x = self.pool(self.activation(self.conv1(x)))
+        x = self.pool(self.activation(self.conv2(x)))
+        x = torch.flatten(x, start_dim=1)
+        x = self.activation(self.fc1(x))
+        x = self.activation(self.fc2(x))
+        x = self.fc3(x)
+        x = nn.Sigmoid()(x)  # for values diapason in [0,1]
+        return x
+
+
+class RegressionNet_pl(LightningModule):
+    def __init__(self, model, *args, checkpoint=None,
+                 start_learning_rate=1e-6, batch_size=1, criterion=nn.CrossEntropyLoss(),
+                 loader=None,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.start_learning_rate = start_learning_rate
+        self.batch_size = batch_size
+        self.model = model
+        if checkpoint is not None and Path(checkpoint).exists():
+            self.model.load_state_dict(torch.load(str(checkpoint)))
+        self.criterion = criterion
+        self.loader = loader
+
+    def forward(self, img):
+        pred = self.model(img)
+        return pred
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.start_learning_rate,
+            weight_decay=1e-8,
+        )
+
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     optimizer, mode='min', factor=0.5,
+        #     patience=10, cooldown=5,
+        #     min_lr=1e-7, eps=1e-7,
+        #     verbose=True,
+        # )
+
+        major_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=major_scheduler)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": 'val_loss'}
+
+    def train_dataloader(self):
+        return self.loader['train']
+
+    def training_step(self, batch, batch_idx):
+        imgs, gts = batch
+        preds = self(imgs)
+        loss = self.criterion(preds, gts)
+        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size)
+        return loss
+
+    def val_dataloader(self):
+        return self.loader['test']
+
+    def validation_step(self, batch, batch_idx):
+        imgs, gts = batch
+        preds = self(imgs)
+        loss = self.criterion(preds, gts)
+        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)
+        cos = CosineSimilarity(reduction='mean')(preds, gts)  # = 1 if identical
+        self.log("val_cos", 1 - cos, prog_bar=True, batch_size=self.batch_size)
         return loss
 
     def save_pth(self, path, only_weight=True):
