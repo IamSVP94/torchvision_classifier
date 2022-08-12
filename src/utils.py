@@ -115,7 +115,7 @@ class Classifier_pl(LightningModule):
         gts = labels.squeeze(1)
         preds = self(imgs)
         loss = self.criterion(preds, gts)
-        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size)
+        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         return loss
 
     def val_dataloader(self):
@@ -126,9 +126,9 @@ class Classifier_pl(LightningModule):
         gts = labels.squeeze(1)
         preds = self(imgs)
         loss = self.criterion(preds, gts)
-        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)
+        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         acc = accuracy(preds, gts)
-        self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size)
+        self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         return loss
 
     def save_pth(self, path, mode='torch', only_weight=True):
@@ -275,7 +275,7 @@ class RegressionNet_pl(LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.start_learning_rate,
-            weight_decay=1e+4,
+            # weight_decay=1e+4,
         )
 
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -296,7 +296,7 @@ class RegressionNet_pl(LightningModule):
         imgs, gts = batch
         preds = self(imgs)
         loss = self.criterion(preds, gts)
-        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size)
+        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         return loss
 
     def val_dataloader(self):
@@ -306,9 +306,9 @@ class RegressionNet_pl(LightningModule):
         imgs, gts = batch
         preds = self(imgs)
         loss = self.criterion(preds, gts)
-        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size)
+        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         cos = CosineSimilarity(reduction='mean')(preds, gts)  # = 1 if identical
-        self.log("val_cos", 1 - cos, prog_bar=True, batch_size=self.batch_size)
+        self.log("val_cos", 1 - cos, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         return loss
 
     def save_pth(self, path, only_weight=True):
