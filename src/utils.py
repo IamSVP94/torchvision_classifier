@@ -1,11 +1,9 @@
-import random
 from pathlib import Path
 from typing import List, Tuple
 import cv2
 import pandas as pd
 import torch
 from torch import nn as nn
-import pytorch_lightning as pl
 from pytorch_lightning import LightningModule
 from torch.utils.data import Dataset
 import albumentations as A
@@ -13,11 +11,6 @@ from albumentations.pytorch import ToTensorV2 as ToTensor
 from warmup_scheduler import GradualWarmupScheduler
 from torchmetrics.functional import accuracy
 from torchmetrics import CosineSimilarity
-from src.constants import SEED
-
-# print(pl.__version__)
-pl.seed_everything(SEED)  # unified seed
-random.seed(SEED)  # unified seed
 
 
 class FacesDataset(Dataset):
@@ -58,6 +51,12 @@ class FacesDataset(Dataset):
                 A.HorizontalFlip(p=0.5),
                 A.PixelDropout(p=0.2),
                 A.Sharpen(p=0.2),
+                A.HueSaturationValue(p=0.3),
+                A.CLAHE(p=0.3),
+                # A.RandomContrast(p=0.3),
+                # A.RandomBrightness(p=0.3),
+                A.RandomBrightnessContrast(p=0.3),
+                A.RandomGamma(p=0.3),
                 A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), always_apply=True),
                 ToTensor(always_apply=True),
             ])
@@ -71,7 +70,7 @@ class FacesDataset(Dataset):
         return transform_img, GT
 
 
-class ConvNext_pl(LightningModule):
+class Classifier_pl(LightningModule):
     def __init__(self, model, *args, checkpoint=None,
                  start_learning_rate=1e-6, batch_size=1, criterion=nn.CrossEntropyLoss(),
                  loader=None,
@@ -92,8 +91,8 @@ class ConvNext_pl(LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
-            # lr=self.start_learning_rate,
-            weight_decay=1e-8,
+            lr=self.start_learning_rate,
+            # weight_decay=0.01,
         )
 
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -103,7 +102,8 @@ class ConvNext_pl(LightningModule):
         #     verbose=True,
         # )
 
-        major_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        # major_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        major_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=300, gamma=0.5)
         scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=major_scheduler)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": 'val_loss'}
 
@@ -131,11 +131,17 @@ class ConvNext_pl(LightningModule):
         self.log("val_accuracy", acc, prog_bar=True, batch_size=self.batch_size)
         return loss
 
-    def save_pth(self, path, only_weight=True):
-        if only_weight:
-            torch.save(self.model.state_dict(), str(path))
-        else:
-            torch.save(self.model, str(path))
+    def save_pth(self, path, mode='torch', only_weight=True):
+        assert mode in ['torch', 'onnx']
+        if mode == 'torch':
+            if only_weight:
+                torch.save(self.model.state_dict(), str(path))
+            else:
+                torch.save(self.model, str(path))
+        elif mode == 'onnx':
+            pass
+            # dummy_input = torch.randn(1, 3, 224, 224)
+            # torch.onnx.export(self.model, dummy_input, "vgg.onnx")
 
 
 class RegressionDataset(Dataset):
@@ -269,7 +275,7 @@ class RegressionNet_pl(LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.start_learning_rate,
-            weight_decay=1e-8,
+            weight_decay=1e+4,
         )
 
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

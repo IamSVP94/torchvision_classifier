@@ -7,10 +7,10 @@ from src.utils import FacesDataset
 from torchvision import models
 from torchmetrics.functional import accuracy, f1_score
 
-test = FacesDataset(csv_file=BASE_DIR / 'temp/test.csv', mode='test')
+test = FacesDataset(csv_file='/home/vid/Downloads/datasets/face_crop_norm_dataset/test.csv', mode='test')
 loader = DataLoader(test, batch_size=5000, drop_last=False, shuffle=False, num_workers=num_workers)
 
-checkpoint = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/ckp89.pth'
+checkpoint = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/ckp_face_selector.pth'
 model = models.convnext_tiny(pretrained=False, num_classes=2)
 
 weights = torch.load(checkpoint, map_location="cpu")

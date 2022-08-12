@@ -2,6 +2,8 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+
 from src.constants import BASE_DIR
 import onnxruntime as ort
 from sklearn.metrics import accuracy_score, f1_score
@@ -31,13 +33,16 @@ def preprocess_input(img, mean=None, std=None, input_space="RGB", size=(112, 112
     return img
 
 
-model_path = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/src/89.onnx'
+model_path = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/src/face_selector_softmaxv2.onnx'
 model = ort.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
 input_name = model.get_inputs()[0].name
 
-df = pd.read_csv(BASE_DIR / 'temp/test.csv', names=['path', 'label'])
+df = pd.read_csv('/home/vid/Downloads/datasets/face_crop_norm_dataset/datasetv2/test.csv', names=['path', 'label'])
+# df_train = pd.read_csv('/home/vid/Downloads/datasets/face_crop_norm_dataset/datasetv2/train.csv', names=['path', 'label'])
+# df = df_test.append(df_train, ignore_index=True)
+
 GTs, PREDs = [], []
-for idx, (path, GT) in df.iterrows():
+for idx, (path, GT) in tqdm(df.iterrows(), total=len(df), colour='green', leave=False):
     img = cv2.imread(path)  # Read image
     new_img = preprocess_input(img, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     PRED = model.run(None, {input_name: new_img})[0]
