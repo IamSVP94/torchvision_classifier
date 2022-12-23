@@ -24,6 +24,7 @@ class AgeDataset(Dataset):
     def __init__(self,
                  img_list: List[str] = None,
                  num_classes: int = None,
+                 len_limit: int = None,
                  csv_file=None,
                  labels: List[str] = None,
                  input_size: Tuple[int] = (112, 112),
@@ -40,8 +41,11 @@ class AgeDataset(Dataset):
         elif csv_file:
             df = pd.read_csv(csv_file, names=['path', 'label'])
             self.imgs = list(map(Path, df['path']))
-            # self.labels = [float(age) / 100 for age in df['label'].to_list()]  # for rergression
-            self.labels = [float(age) for age in df['label'].to_list()]  # for classification
+            self.labels = [float(age) / 100 for age in df['label'].to_list()]  # for rergression
+            # self.labels = [float(age) for age in df['label'].to_list()]  # for classification
+        if len_limit:
+            self.imgs = self.imgs[:len_limit]
+            self.labels = self.labels[:len_limit]
 
         '''  # classes balance
         if mode == 'train':
@@ -73,6 +77,10 @@ class AgeDataset(Dataset):
     def __getitem__(self, item: int) -> Tuple:
         filename = self.imgs[item]
         img = cv2.cvtColor(cv2.imread(str(filename)), cv2.COLOR_BGR2RGB)
+
+        # w, h, c = img.shape
+        # if (w, h) != self.input_size:
+        #     img = cv2.resize(img, self.input_size)
 
         transform = self.get_training_augmentation() if self.mode == 'train' else []  # augment for train
         transform.extend([
@@ -107,8 +115,7 @@ class FacesDataset(Dataset):
         for i in self.labels:
             self.class_balance[i] = self.class_balance[i] + 1 if self.class_balance.get(i) else 1
         min_clsas_counter = min(self.class_balance.values())
-        self.weighted = torch.Tensor(
-            [self.class_balance[i] / min_clsas_counter for i in range(len(self.class_balance.keys()))])
+        self.weighted = torch.Tensor([self.class_balance[i] / min_clsas_counter for i in range(len(self.class_balance.keys()))])
         self.mode = mode
         self.input_size = input_size
 
@@ -382,7 +389,7 @@ class CommonNNModule_pl(LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.start_learning_rate,
-            # weight_decay=1e+4,
+            weight_decay=1e-2,
         )
 
         # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -393,8 +400,9 @@ class CommonNNModule_pl(LightningModule):
         # )
 
         major_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
-        scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=major_scheduler)
-        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": 'val_loss'}
+        # scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=major_scheduler)
+        # return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": 'val_loss'}
+        return {"optimizer": optimizer, "lr_scheduler": major_scheduler, "monitor": 'val_loss'}
 
     def train_dataloader(self):
         return self.loader['train']
@@ -403,8 +411,12 @@ class CommonNNModule_pl(LightningModule):
         imgs, gts = batch
         preds = self(imgs)
         loss = self.criterion(preds, gts)
-        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         return loss
+
+    def training_epoch_end(self, outputs):
+        # calculating average loss
+        avg_loss = torch.stack([x['loss'] for x in outputs]).mean()
+        self.log("train_loss", avg_loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
 
     def val_dataloader(self):
         return self.loader['test']
@@ -413,19 +425,23 @@ class CommonNNModule_pl(LightningModule):
         imgs, gts = batch
         preds = self(imgs)
         loss = self.criterion(preds, gts)
-        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         return loss
 
-    def save_pth(self, path, mode='torch', only_weight=True):
+    def validation_epoch_end(self, outputs):
+        # calculating average loss
+        avg_loss = torch.stack([x for x in outputs]).mean()
+        self.log("val_loss", avg_loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
+
+    def save_pth(self, path, mode='torch', input_size=None, only_weight=True):
         assert mode in ['torch', 'onnx']
         if mode == 'torch':
             if only_weight:
                 torch.save(self.model.state_dict(), str(path))
             else:
                 torch.save(self.model, str(path))
-        elif mode == 'onnx':
-            x = torch.randn(1, 3, self.input_size, self.input_size, requires_grad=True)
-            torch.onnx.export(self.model, x, "onnx_model.onnx",
+        elif mode == 'onnx' and input_size:
+            x = torch.randn(1, 3, input_size[0], input_size[1], requires_grad=True)
+            torch.onnx.export(self.model, x, path,
                               export_params=True,
                               opset_version=11,
                               do_constant_folding=True,
@@ -438,11 +454,28 @@ class RegressionNet_pl(CommonNNModule_pl):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    def training_step(self, batch, batch_idx):
+        imgs, gts = batch
+        preds = self(imgs)
+        if self.special_criterion is not None:
+            loss1 = self.special_criterion(preds, gts)
+            loss2 = self.criterion(preds, gts)
+            loss = loss1 + loss2
+        else:
+            loss = self.criterion(preds, gts)
+        # self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
+        return loss
+
     def validation_step(self, batch, batch_idx):
         imgs, gts = batch
         preds = self(imgs)
-        loss = self.criterion(preds, gts)
-        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
+        if self.special_criterion is not None:
+            loss1 = self.criterion(preds, gts)
+            loss2 = self.special_criterion(preds, gts)
+            loss = loss1 + loss2
+        else:
+            loss = self.criterion(preds, gts)
+        # self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
 
         mae = torch.abs(gts - preds) * 100
         self.log("val_mae", mae, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
@@ -467,7 +500,6 @@ class Classifier_pl(CommonNNModule_pl):
             loss = mean_loss + variance_loss + softmaxloss
         else:
             loss = self.criterion(preds, gts)
-        self.log("train_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -482,7 +514,6 @@ class Classifier_pl(CommonNNModule_pl):
             loss = mean_loss + variance_loss + softmaxloss
         else:
             loss = self.criterion(preds, gts)
-        self.log("val_loss", loss, prog_bar=True, batch_size=self.batch_size, on_step=False, on_epoch=True)
 
         argmaxpred = torch.argmax(preds, dim=1)
         mae = torch.abs(gts - argmaxpred).to(torch.float32)
