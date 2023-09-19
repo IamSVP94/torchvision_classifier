@@ -1,83 +1,110 @@
-from pathlib import Path
 import torch
-from torch.utils.data import DataLoader
-
-from src.constants import BASE_DIR, num_workers, AVAIL_GPUS
-from src.utils import FacesDataset, Classifier_pl
+import torchmetrics
+from pathlib import Path
+from clearml import Task
+import albumentations as A
 from torchvision import models
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import LearningRateMonitor
-from datetime import datetime
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
+from torch.utils.data import DataLoader
+from pytorch_lightning.loggers import TensorBoardLogger
+from src.constants import BASE_DIR, num_workers, AVAIL_GPUS
+from src.utils import Classifier_pl, CustomDataset, MetricSMPCallback
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
-DATASET_DIR = Path('/home/vid/Downloads/datasets/face_crop_norm_dataset/datasetv2/')
+# PARAMS
+DATASET_DIR = Path('/home/vid/hdd/datasets/FACES/face_selector_dataset/')
+input_size = (112, 112)  # h,w
+EPOCHS = 1000
+start_learning_rate = 1e-6
+BATCH_SIZE = 290 if AVAIL_GPUS else 1
 
-train = FacesDataset(csv_file='/home/vid/Downloads/datasets/face_crop_norm_dataset/datasetv2/train.csv', mode='train')
-test = FacesDataset(csv_file='/home/vid/Downloads/datasets/face_crop_norm_dataset/datasetv2/test.csv', mode='test')
+EXPERIMENT_NAME = 'face_selector_efficientnet_b2'  # use this model from torchvision
+MODEL_VERSION = 'R2.1'
+VERSION_TITLE = f'{EXPERIMENT_NAME}_{MODEL_VERSION}_epochs={EPOCHS}'
 
-start_learning_rate = 1e-5
-BATCH_SIZE = 270 if AVAIL_GPUS else 1
-
-loaders = {
-    'train': DataLoader(
-        train,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=num_workers,
-        drop_last=True,
-    ),
-    'test': DataLoader(
-        test,
-        batch_size=1,
-        shuffle=False,
-        num_workers=num_workers,
-        drop_last=False,
-    ),
-}
-
-# TODO: save checkpoint.pth while train
-# logdir = BASE_DIR / 'logs/classificator_norm' / datetime.now().strftime("%Y%m%d-%H%M%S")
-logdir = BASE_DIR / 'logs/classificator_norm'
+logdir = BASE_DIR / 'logs/face_selector'
 logdir.mkdir(parents=True, exist_ok=True)
-version_title = f'efficientnet_b2_epochs=241_weightdecay=None_lr={start_learning_rate}'
-logger = TensorBoardLogger(save_dir=logdir, name='faces_selector1108', version=version_title)
 
-print(train.class_balance)  # class imbalance
-print(train.weighted)  # class imbalance
+weights = None
 
-# checkpoint_model = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/ckp_face_selectorv2_1008_model.pth'
-model = Classifier_pl(
-    # model=models.convnext_tiny(pretrained=False, num_classes=2),
-    model=models.efficientnet_b2(pretrained=False, num_classes=2),
-    criterion=torch.nn.CrossEntropyLoss(weight=train.weighted),
-    start_learning_rate=start_learning_rate,
-    batch_size=BATCH_SIZE,
-    loader=loaders,
-    # checkpoint=checkpoint_model,
+# CLEARML CONFIG
+additional_tags = ['efficientnet_b2', ]
+task = Task.init(
+    project_name='FACEID/face_selector',
+    task_name=EXPERIMENT_NAME, tags=['classification', MODEL_VERSION] + additional_tags,
 )
 
+# AUGMENTATIONS
+train_transforms = [
+    A.HorizontalFlip(p=0.5),
+    A.PixelDropout(p=0.05),
+    A.Sharpen(p=0.2),
+    A.HueSaturationValue(p=0.3),
+    A.CLAHE(p=0.3),
+    # A.RandomContrast(p=0.3), # A.RandomBrightness(p=0.3),
+    A.RandomBrightnessContrast(p=0.3),
+    A.RandomGamma(p=0.3),
+]
+val_transforms = []
+
+common_transforms = [
+    A.Resize(height=input_size[0], width=input_size[1], always_apply=True),
+    A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), always_apply=True),
+]
+
+# DATASETS
+train = CustomDataset(csv_file='/home/vid/hdd/datasets/FACES/face_selector_dataset/train.csv',
+                      augmentation=train_transforms + common_transforms)
+val = CustomDataset(csv_file='/home/vid/hdd/datasets/FACES/face_selector_dataset/test.csv',
+                    augmentation=val_transforms + common_transforms)
+
+train_loader = DataLoader(train, batch_size=BATCH_SIZE, shuffle=True, num_workers=num_workers, drop_last=False)
+val_loader = DataLoader(val, batch_size=1, shuffle=False, num_workers=num_workers, drop_last=False)
+
+# METRICS
+metrics_callback = MetricSMPCallback(metrics={
+    'accuracy': torchmetrics.classification.BinaryAccuracy(),
+    'F1score': torchmetrics.classification.BinaryF1Score(),
+    'auroc': torchmetrics.classification.BinaryAUROC(),
+}, )
+
+# LOGGER
+tb_logger = TensorBoardLogger(save_dir=logdir, name='faces_selector', version=VERSION_TITLE)
 lr_monitor = LearningRateMonitor(logging_interval='epoch')
-ckp_acc = ModelCheckpoint(monitor='val_accuracy', mode='max',
-                          save_last=True, save_top_k=2,
-                          save_on_train_epoch_end=True,
-                          filename='{epoch:02d}-{step:02d}-{val_accuracy:.4f}-{val_loss:.4f}',
-                          )
-ckp_val_loss = ModelCheckpoint(monitor='val_loss', mode='min',
-                               save_last=True, save_top_k=2,
-                               save_on_train_epoch_end=True,
-                               filename='{epoch:02d}-{step:02d}-{val_loss:.4f}-{val_accuracy:.4f}',
-                               )
+best_metric_saver = ModelCheckpoint(
+    mode='max', save_top_k=1, save_last=True, auto_insert_metric_name=False,
+    monitor='accuracy/validation', filename='epoch={epoch:02d}-accuracy_val={accuracy/validation:.4f}',
+)
 
-trainer = Trainer(gpus=AVAIL_GPUS,
-                  max_epochs=241,
-                  logger=logger,
-                  log_every_n_steps=10,
-                  callbacks=[lr_monitor, ckp_acc, ckp_val_loss],
-                  )
+# MODEL
+# TODO: change for hugging face models using
+classes = train.get_classes()
+model = Classifier_pl(
+    # model=models.convnext_tiny(weights=None, num_classes=len(classes)),
+    model=models.efficientnet_b2(weights=None, num_classes=len(classes)),
+    loss_fn=torch.nn.CrossEntropyLoss(weight=train.weighted),
+    start_learning_rate=start_learning_rate, classes=classes,
+)
 
-# ckp_trainer = '/home/vid/hdd/projects/PycharmProjects/torchvision_classifier/logs/classificator_norm/faces_selector1108/convnext_tiny_500_weightdecay=0.01_lr=1e-05/checkpoints/last.ckpt'
-# trainer.fit(model, ckpt_path=ckp_trainer)
-trainer.fit(model)
+# TRAIN
+trainer = Trainer(
+    max_epochs=EPOCHS, num_sanity_val_steps=0, devices=-1,
+    accelerator='cuda', logger=tb_logger, log_every_n_steps=10,
+    callbacks=[lr_monitor, metrics_callback, best_metric_saver],
+)
 
-model.save_pth(f'{version_title}.pth')
+trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=weights)
+
+# TEST AND SAVE
+# test_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=15)
+# test_metrics = trainer.test(model, dataloaders=test_loader, ckpt_path='best', verbose=True)  # ckpt_path='last'
+
+logger_weights_dir = Path(best_metric_saver.best_model_path).parent.parent
+ONNX_PATH = logger_weights_dir / f'{EXPERIMENT_NAME}_{MODEL_VERSION}_{input_size[1]}x{input_size[0]}.onnx'
+
+# TODO: change to current logdir onnx path because rewriting?
+model.save_onnx_best(
+    weights=best_metric_saver.best_model_path,  # best_iou_saver.last_model_path
+    window_size=input_size,
+    onnx_path=ONNX_PATH,
+)
