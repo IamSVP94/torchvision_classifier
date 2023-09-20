@@ -1,9 +1,10 @@
+import io
 import cv2
-import numpy as np
 import torch
 import random
-import torchmetrics
+import numpy as np
 import pandas as pd
+import seaborn as sns
 from pathlib import Path
 import albumentations as A
 import pytorch_lightning as pl
@@ -13,6 +14,7 @@ from typing import List, Tuple, Union, Sequence
 from warmup_scheduler import GradualWarmupScheduler
 from albumentations import BasicTransform, BaseCompose
 from albumentations.pytorch import ToTensorV2 as ToTensor
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
 # import os
@@ -146,6 +148,50 @@ class CommonNNModule_pl(pl.LightningModule):
 class Classifier_pl(CommonNNModule_pl):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.steps_preds = dict()
+        self.steps_gts = dict()
+
+    def _shared__epoch_start(self, stage, *args, **kwargs) -> None:
+        self.steps_preds[stage] = []
+        self.steps_gts[stage] = []
+
+    def _shared_step_minor(self, batch, batch_idx, stage):
+        _, labels = batch
+        gts = labels.squeeze(1).tolist()
+        self.steps_gts[stage].extend(gts)
+
+        output = self._shared_step(batch, stage=stage)
+        preds = torch.argmax(output['preds'], dim=1).tolist()
+        self.steps_preds[stage].extend(preds)
+        return output
+
+    def _shared_epoch_end(self, stage, *args, **kwargs) -> None:
+        del self.steps_preds[stage]
+        del self.steps_gts[stage]
+
+    def on_train_epoch_start(self, *args, **kwargs) -> None:
+        stage = 'train'
+        self._shared__epoch_start(stage, *args, **kwargs)
+
+    def on_validation_epoch_start(self, *args, **kwargs) -> None:
+        stage = 'validation'
+        self._shared__epoch_start(stage, *args, **kwargs)
+
+    def training_step(self, batch, batch_idx):
+        stage = 'train'
+        return self._shared_step_minor(batch, batch_idx, stage)
+
+    def validation_step(self, batch, batch_idx):
+        stage = 'validation'
+        return self._shared_step_minor(batch, batch_idx, stage)
+
+    def on_train_epoch_end(self, *args, **kwargs) -> None:
+        stage = 'train'
+        self._shared_epoch_end(stage, *args, **kwargs)
+
+    def on_validation_epoch_end(self, *args, **kwargs) -> None:
+        stage = 'validation'
+        self._shared_epoch_end(stage, *args, **kwargs)
 
 
 def get_random_colors(n=1):
@@ -183,20 +229,44 @@ class MetricSMPCallback(pl.Callback):
             metric_results[m_name] = round(metric(preds, gts).item(), 4)
         return metric_results
 
-    def plot_confusion_matrix(self, preds, gts, trainer):
-        matrix = torchmetrics.ConfusionMatrix(
-            task='multiclass', num_classes=len(trainer.model.classes)
-        ).to(preds.get_device())(preds, gts)
-        # TODO: add conf matrix in logger https://stackoverflow.com/questions/41617463/tensorflow-confusion-matrix-in-tensorboard
+    @staticmethod
+    def save_ax_nosave(ax, **kwargs):
+        ax.axis("off")
+        ax.figure.canvas.draw()
+        trans = ax.figure.dpi_scale_trans.inverted()
+        bbox = ax.bbox.transformed(trans)
+        buff = io.BytesIO()
+        plt.savefig(buff, format="png", dpi=ax.figure.dpi, bbox_inches=bbox, **kwargs)
+        ax.axis("off")
+        buff.seek(0)
+        im = plt.imread(buff)
+        return im[:, :, -2::-1] * 255
 
-        # trainer.model.logger.experiment.add_image(
-        #     tag=f'{stage}/{batch_idx}',
-        #     img_tensor=img_for_show,
-        #     global_step=trainer.current_epoch,
-        #     dataformats='HWC'
-        # )
-        print(189, matrix)
-        exit()
+    def plot_confusion_matrix(self, preds, gts, labels=None, return_mode='img'):
+        fig, ax = plt.subplots()
+
+        matrix = confusion_matrix(gts, preds, labels=labels)
+
+        # Set names to show in boxes
+        classes = [f'gt={i} pred={j}' for i in labels for j in labels]
+        # Set values format
+        values = ["{0:0.0f}".format(x) for x in matrix.flatten()]
+        # Find percentages and set format
+        # TODO: change bug in percentages
+        # percentages = ["{0:.1%}".format(x) for x in matrix.flatten() / np.sum(matrix)]
+
+        # Combine classes, values and percentages to show
+        # combined = [f"{c}\n{v} ({p})" for c, v, p in zip(classes, values, percentages)]
+        combined = [f"{c}\n{v}" for c, v in zip(classes, values)]
+
+        sns.heatmap(
+            annot=np.array(combined).reshape(len(labels), len(labels)),
+            data=matrix, fmt='', cmap='viridis', ax=ax,
+        )
+        if return_mode == 'plt':
+            return fig
+        elif return_mode == 'img':
+            return self.save_ax_nosave(ax)
 
     @torch.no_grad()
     def _on_shared_batch_end(self, trainer, outputs, batch, batch_idx, stage) -> None:
@@ -206,8 +276,6 @@ class MetricSMPCallback(pl.Callback):
         for m_name, m_val in metrics.items():
             m_title = f'{m_name}/{stage}'
             trainer.model.log(m_title, m_val, on_step=False, on_epoch=True)
-        # self.plot_confusion_matrix(preds=preds, gts=gts.squeeze(1), trainer=trainer)
-
         train_condition = stage in ['train'] and batch_idx in self.batches_check_train
         val_condition = stage in ['validation'] and batch_idx in self.batches_check_validation
         if train_condition or val_condition:
@@ -271,6 +339,31 @@ class MetricSMPCallback(pl.Callback):
 
     def on_test_batch_end(self, trainer, pl_module, outputs, batch, batch_idx) -> None:
         self._on_shared_batch_end(trainer, outputs, batch, batch_idx, stage='test')
+
+    def _shared_epoch_end(self, trainer, pl_module, stage) -> None:
+        preds = pl_module.steps_preds[stage]
+        gts = pl_module.steps_gts[stage]
+
+        conf_matrix = self.plot_confusion_matrix(
+            preds=preds,
+            gts=gts,
+            labels=sorted(list(trainer.model.classes)),
+            return_mode='plt',
+        )
+        # plt_show_img(conf_matrix, 'cm')  # if return_mode='img'
+        trainer.model.logger.experiment.add_figure(
+            tag=f'{stage}/conf_matrix',
+            figure=conf_matrix,
+            global_step=trainer.current_epoch,
+        )
+
+    def on_train_epoch_end(self, trainer, pl_module) -> None:
+        stage = 'train'
+        self._shared_epoch_end(trainer, pl_module, stage)
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        stage = 'validation'
+        self._shared_epoch_end(trainer, pl_module, stage)
 
     def on_train_epoch_start(self, trainer, pl_module) -> None:
         if trainer.current_epoch == 0:  # if 0 epoch not need to save
