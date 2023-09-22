@@ -53,7 +53,7 @@ class CustomDataset(Dataset):
         return len(self.imgs)
 
     def get_classes(self) -> int:
-        return set(self.labels)
+        return list(set(self.labels))
 
     def __getitem__(self, item: int) -> Tuple:
         filename = self.imgs[item]
@@ -74,8 +74,7 @@ class CommonNNModule_pl(pl.LightningModule):
         if checkpoint is not None and Path(checkpoint).exists():
             self.model.load_state_dict(torch.load(str(checkpoint)))
         self.loss_fn = loss_fn
-        # self.save_hyperparameters(ignore=['model', 'loss_fn'])
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['model', 'loss_fn'])
 
     def forward(self, img):
         pred = self.model(img)
@@ -85,7 +84,7 @@ class CommonNNModule_pl(pl.LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.start_learning_rate,
-            # weight_decay=1e-2,
+            weight_decay=5e-2,
         )
 
         # lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -95,7 +94,7 @@ class CommonNNModule_pl(pl.LightningModule):
         #     verbose=True,
         # )
 
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
         warmup_scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=10, after_scheduler=lr_scheduler)
         return {"optimizer": optimizer, "lr_scheduler": warmup_scheduler, "monitor": 'val_loss'}
 
@@ -204,7 +203,8 @@ def get_random_colors(n=1):
 
 class MetricSMPCallback(pl.Callback):
     def __init__(self, metrics, activation=None,
-                 log_img: bool = False, save_img: bool = False,
+                 log_img: bool = False,
+                 save_img: bool = False,
                  n_img_check_per_epoch_validation: int = 0,
                  n_img_check_per_epoch_train: int = 0,
                  ) -> None:
@@ -350,12 +350,12 @@ class MetricSMPCallback(pl.Callback):
             labels=sorted(list(trainer.model.classes)),
             return_mode='plt',
         )
-        # plt_show_img(conf_matrix, 'cm')  # if return_mode='img'
+        # plt_show_img(conf_matrix, f'cm {len(preds)}')  # if return_mode='img'
         trainer.model.logger.experiment.add_figure(
             tag=f'{stage}/conf_matrix',
             figure=conf_matrix,
             global_step=trainer.current_epoch,
-        )
+        )  # if return_mode='plt'
 
     def on_train_epoch_end(self, trainer, pl_module) -> None:
         stage = 'train'
